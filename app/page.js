@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-
+import { useRouter } from 'next/navigation';
+import { listenToWebhook } from './utils/listenToWebhook';
 export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [surveys, setSurveys] = useState([]);
   const [webhookUrls, setWebhookUrls] = useState({});
+  const router = useRouter();
 
   useEffect(() => {
     const savedApiKey = localStorage.getItem('formbricksApiKey');
@@ -50,73 +52,37 @@ export default function Home() {
     fetchSurveys(apiKey);
   };
 
-  const createWorkflow = async (surveyId) => {
-    try {
-      const smeeUrl = `https://smee.io/${surveyId}`;
-      setWebhookUrls(prev => ({ ...prev, [surveyId]: smeeUrl }));
-      const updatedWebhookUrls = { ...webhookUrls, [surveyId]: smeeUrl };
-      localStorage.setItem('webhookUrls', JSON.stringify(updatedWebhookUrls));
+  const createOrManageWorkflow = async (surveyId) => {
+    if (webhookUrls[surveyId]) {
+      router.push(`${surveyId}`);
+    } else {
+      try {
+        const smeeUrl = `https://smee.io/${surveyId}`;
+        setWebhookUrls(prev => ({ ...prev, [surveyId]: smeeUrl }));
+        const updatedWebhookUrls = { ...webhookUrls, [surveyId]: smeeUrl };
+        localStorage.setItem('webhookUrls', JSON.stringify(updatedWebhookUrls));
 
-      await fetch('api/v1/webhooks', {
-        method: 'POST',
-        headers: { 
-          'x-api-key': apiKey,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url: smeeUrl,
-          triggers: ['responseCreated'],
-          surveyIds: [surveyId]
-        })
-      });
+        await fetch('api/v1/webhooks', {
+          method: 'POST',
+          headers: { 
+            'x-api-key': apiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            url: smeeUrl,
+            triggers: ['responseCreated'],
+            surveyIds: [surveyId]
+          })
+        });
 
-      // Start listening to the webhook
-      listenToWebhook(smeeUrl, surveyId);
-    } catch (error) {
-      console.error('Error creating workflow:', error);
-    }
-  };
-
-
-
-  const listenToWebhook = (url, surveyId) => {
-    const eventSource = new EventSource(url);
-    eventSource.onmessage = async (event) => {
-      const webhookData = JSON.parse(event?.data);
-      if (webhookData.body && webhookData.body.data.id) {
-        if (webhookData.body && webhookData.body.data.data) {
-          for (const key in webhookData.body.data.data) {
-            if (typeof webhookData.body.data.data[key] === 'string') {
-              webhookData.body.data.data[key] = webhookData.body.data.data[key] + ", Updated Using Lamatic Test Task App";
-            } else if (typeof webhookData.body.data.data[key] === 'number') {
-              webhookData.body.data.data[key] = webhookData.body.data.data[key] + 1234567890;
-            } else if (Array.isArray(webhookData.body.data.data[key])) {
-              webhookData.body.data.data[key].push("Updated Using Lamatic Test Task App");
-            } else {
-              webhookData.body.data.data[key] = "Updated Using Lamatic Test Task App";
-            }
-          }
-        }
-        await sendResponse(webhookData.body.data.id, webhookData.body.data);
+        listenToWebhook(smeeUrl, apiKey);
+      } catch (error) {
+        console.error('Error creating workflow:', error);
       }
-    };
-  };
-
-  const sendResponse = async (responseId, updateData) => {
-    try {
-      const response = await fetch(`api/v1/management/responses/${responseId}`, {
-        method: 'PUT',
-        headers: { 
-          'x-api-key': apiKey,
-          'Content-Type': 'application/json'
-        },
-        redirect: 'follow',
-        body: JSON.stringify(updateData),
-      });
-    } catch (error) {
-      console.error('Error sending response:', error);
     }
   };
+
+
 
   return (
     <div className="min-h-screen bg-white text-blue-600 p-8">
@@ -145,10 +111,10 @@ export default function Home() {
                   <h3 className="font-bold">{survey.name}</h3>
                   <p>{survey.description}</p>
                   <button
-                    onClick={() => createWorkflow(survey.id)}
+                    onClick={() => createOrManageWorkflow(survey.id)}
                     className="mt-2 w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
                   >
-                    Create Workflow
+                    {webhookUrls[survey.id] ? 'Manage Workflow' : 'Create Workflow'}
                   </button>
                   {webhookUrls[survey.id] && (
                     <p className="mt-2 text-sm">
