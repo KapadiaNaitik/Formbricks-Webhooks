@@ -1,101 +1,166 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.js
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [apiKey, setApiKey] = useState('');
+  const [surveys, setSurveys] = useState([]);
+  const [webhookUrls, setWebhookUrls] = useState({});
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+  useEffect(() => {
+    const savedApiKey = localStorage.getItem('formbricksApiKey');
+    if (savedApiKey) {
+      setApiKey(savedApiKey);
+      fetchSurveys(savedApiKey);
+    }
+
+    const savedWebhookUrls = JSON.parse(localStorage.getItem('webhookUrls') || '{}');
+    setWebhookUrls(savedWebhookUrls);
+  }, []);
+
+  useEffect(() => {
+    Object.entries(webhookUrls).forEach(([surveyId, url]) => {
+      listenToWebhook(url, surveyId);
+    });
+  }, [webhookUrls]);
+
+  const fetchSurveys = async (key) => {
+    try {
+      const response = await fetch('api/v1/management/surveys', {
+        method: 'GET',
+        headers: { 
+          'x-api-key': key,
+          'Content-Type': 'application/json'
+        },
+        redirect: 'follow',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setSurveys(data.data);
+    } catch (error) {
+      console.error('Error fetching surveys:', error);
+    }
+  };
+
+  const handleApiKeySubmit = (e) => {
+    e.preventDefault();
+    localStorage.setItem('formbricksApiKey', apiKey);
+    fetchSurveys(apiKey);
+  };
+
+  const createWorkflow = async (surveyId) => {
+    try {
+      const smeeUrl = `https://smee.io/${surveyId}`;
+      setWebhookUrls(prev => ({ ...prev, [surveyId]: smeeUrl }));
+      const updatedWebhookUrls = { ...webhookUrls, [surveyId]: smeeUrl };
+      localStorage.setItem('webhookUrls', JSON.stringify(updatedWebhookUrls));
+
+      await fetch('api/v1/webhooks', {
+        method: 'POST',
+        headers: { 
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: smeeUrl,
+          triggers: ['responseCreated'],
+          surveyIds: [surveyId]
+        })
+      });
+
+      // Start listening to the webhook
+      listenToWebhook(smeeUrl, surveyId);
+    } catch (error) {
+      console.error('Error creating workflow:', error);
+    }
+  };
+
+
+
+  const listenToWebhook = (url, surveyId) => {
+    const eventSource = new EventSource(url);
+    eventSource.onmessage = async (event) => {
+      const webhookData = JSON.parse(event?.data);
+      if (webhookData.body && webhookData.body.data.id) {
+        if (webhookData.body && webhookData.body.data.data) {
+          for (const key in webhookData.body.data.data) {
+            if (typeof webhookData.body.data.data[key] === 'string') {
+              webhookData.body.data.data[key] = webhookData.body.data.data[key] + ", Updated Using Lamatic Test Task App";
+            } else if (typeof webhookData.body.data.data[key] === 'number') {
+              webhookData.body.data.data[key] = webhookData.body.data.data[key] + 1234567890;
+            } else if (Array.isArray(webhookData.body.data.data[key])) {
+              webhookData.body.data.data[key].push("Updated Using Lamatic Test Task App");
+            } else {
+              webhookData.body.data.data[key] = "Updated Using Lamatic Test Task App";
+            }
+          }
+        }
+        await sendResponse(webhookData.body.data.id, webhookData.body.data);
+      }
+    };
+  };
+
+  const sendResponse = async (responseId, updateData) => {
+    try {
+      const response = await fetch(`api/v1/management/responses/${responseId}`, {
+        method: 'PUT',
+        headers: { 
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json'
+        },
+        redirect: 'follow',
+        body: JSON.stringify(updateData),
+      });
+    } catch (error) {
+      console.error('Error sending response:', error);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-white text-blue-600 p-8">
+      <div className="max-w-md mx-auto">
+        <h1 className="text-3xl font-bold mb-6 text-center">Formbricks Survey Manager</h1>
+        
+        <form onSubmit={handleApiKeySubmit} className="mb-8">
+          <input
+            type="text"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Enter Formbricks API Key"
+            className="w-full p-2 border border-blue-300 rounded"
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          <button type="submit" className="mt-2 w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600">
+            Fetch Surveys
+          </button>
+        </form>
+
+        {surveys.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-2xl font-semibold mb-4">Your Surveys</h2>
+            <div className="grid grid-cols-1 gap-4">
+              {surveys.map((survey) => (
+                <div key={survey.id} className="border border-blue-300 p-4 rounded">
+                  <h3 className="font-bold">{survey.name}</h3>
+                  <p>{survey.description}</p>
+                  <button
+                    onClick={() => createWorkflow(survey.id)}
+                    className="mt-2 w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+                  >
+                    Create Workflow
+                  </button>
+                  {webhookUrls[survey.id] && (
+                    <p className="mt-2 text-sm">
+                      Webhook created: {webhookUrls[survey.id]}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
